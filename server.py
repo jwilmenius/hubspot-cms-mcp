@@ -4,10 +4,12 @@ import asyncio
 import httpx
 from dotenv import load_dotenv
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp import types
-
-sys.stdout.reconfigure(encoding='utf-8')
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.requests import Request
+import uvicorn
 
 load_dotenv()
 
@@ -18,7 +20,6 @@ HEADERS = {
 }
 BASE = "https://api.hubapi.com"
 
-# Stratsys blogg-ID:n per språk
 BLOG_IDS = {
     "sv": "5423796480",
     "no": "164698421914",
@@ -33,10 +34,7 @@ async def list_tools():
         types.Tool(
             name="get_blogs",
             description="Hämta lista över tillgängliga Stratsys-bloggar med deras ID:n och språk.",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
+            inputSchema={"type": "object", "properties": {}}
         ),
         types.Tool(
             name="get_blog_posts",
@@ -203,7 +201,6 @@ async def call_tool(name: str, arguments: dict):
                     "postBody": p.get("postBody", "")
                 }
                 return [types.TextContent(type="text", text=str(result))]
-
             elif "search" in arguments:
                 params = {
                     "limit": 10,
@@ -212,15 +209,10 @@ async def call_tool(name: str, arguments: dict):
                 }
                 if "language" in arguments:
                     params["contentGroupId"] = BLOG_IDS[arguments["language"]]
-                r = await client.get(
-                    f"{BASE}/cms/v3/blogs/posts",
-                    headers=HEADERS,
-                    params=params
-                )
+                r = await client.get(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, params=params)
                 posts = r.json().get("results", [])
                 result = [{"id": p["id"], "title": p["name"], "state": p["state"], "publishDate": p.get("publishDate", ""), "url": p.get("url", "")} for p in posts]
                 return [types.TextContent(type="text", text=str(result))]
-
             return [types.TextContent(type="text", text="Ange antingen post_id eller search.")]
 
         elif name == "get_landing_pages":
@@ -260,9 +252,25 @@ async def call_tool(name: str, arguments: dict):
             r = await client.patch(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS, json=payload)
             return [types.TextContent(type="text", text=f"Uppdaterat inlägg {post_id}")]
 
-async def main():
-    async with stdio_server() as (read, write):
-        await app.run(read, write, app.create_initialization_options())
+
+# SSE transport för Railway
+sse = SseServerTransport("/messages/")
+
+async def handle_sse(request: Request):
+    async with sse.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await app.run(
+            streams[0], streams[1], app.create_initialization_options()
+        )
+
+starlette_app = Starlette(
+    routes=[
+        Route("/sse", endpoint=handle_sse),
+        Mount("/messages/", app=sse.handle_post_message),
+    ]
+)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(starlette_app, host="0.0.0.0", port=port)
