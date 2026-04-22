@@ -87,6 +87,20 @@ async def list_tools():
             }
         ),
         types.Tool(
+            name="get_blog_authors",
+            description="Hämta lista över alla bloggförfattare i HubSpot med namn och ID.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "description": "Filtrera på språk för att få språkspecifika Author ID:n (valfritt)"
+                    }
+                }
+            }
+        ),
+        types.Tool(
             name="get_landing_pages",
             description="Hämta landningssidor från HubSpot.",
             inputSchema={
@@ -125,7 +139,7 @@ async def list_tools():
                     },
                     "blog_author_id": {
                         "type": "string",
-                        "description": "ID på bloggförfattaren (valfritt)"
+                        "description": "ID på bloggförfattaren"
                     },
                     "post_body": {
                         "type": "string",
@@ -215,6 +229,34 @@ async def call_tool(name: str, arguments: dict):
                 return [types.TextContent(type="text", text=str(result))]
             return [types.TextContent(type="text", text="Ange antingen post_id eller search.")]
 
+        elif name == "get_blog_authors":
+            r = await client.get(
+                f"{BASE}/blogs/v3/blog-authors",
+                headers=HEADERS,
+                params={"limit": 100}
+            )
+            authors = r.json().get("objects", [])
+            language = arguments.get("language")
+            result = []
+            for a in authors:
+                if a.get("deletedAt", 0) != 0:
+                    continue
+                if a.get("name") == "Sample HubSpot User":
+                    continue
+                entry = {
+                    "id": str(a["id"]),
+                    "name": a.get("fullName") or a.get("name"),
+                    "email": a.get("email", "")
+                }
+                if language and language != "sv":
+                    translations = a.get("translations", {})
+                    if language in translations:
+                        entry["language_id"] = str(translations[language]["id"])
+                    else:
+                        entry["language_id"] = str(a["id"])
+                result.append(entry)
+            return [types.TextContent(type="text", text=str(result))]
+
         elif name == "get_landing_pages":
             params = {"limit": arguments.get("limit", 10)}
             if "state" in arguments:
@@ -253,7 +295,6 @@ async def call_tool(name: str, arguments: dict):
             return [types.TextContent(type="text", text=f"Uppdaterat inlägg {post_id}")]
 
 
-# SSE transport för Railway
 sse = SseServerTransport("/messages/")
 
 async def handle_sse(request: Request):
