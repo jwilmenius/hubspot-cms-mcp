@@ -88,14 +88,18 @@ async def list_tools():
         ),
         types.Tool(
             name="get_blog_authors",
-            description="Hämta lista över Stratsys bloggförfattare i HubSpot med namn och ID.",
+            description=(
+                "Hämta lista över Stratsys bloggförfattare i HubSpot. "
+                "Ange language='sv', 'no' eller 'en' för att få rätt author_id per språk. "
+                "Returnerar author_id som är korrekt för det angivna språket."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
                         "enum": ["sv", "no", "en"],
-                        "description": "Filtrera på språk för språkspecifika Author ID:n (valfritt)"
+                        "description": "Språk att hämta author ID:n för (default: sv)"
                     }
                 }
             }
@@ -139,7 +143,7 @@ async def list_tools():
                     },
                     "blog_author_id": {
                         "type": "string",
-                        "description": "ID på bloggförfattaren"
+                        "description": "ID på bloggförfattaren — hämta via get_blog_authors med rätt language"
                     },
                     "post_body": {
                         "type": "string",
@@ -236,7 +240,7 @@ async def call_tool(name: str, arguments: dict):
                 params={"limit": 100}
             )
             authors = r.json().get("objects", [])
-            language = arguments.get("language")
+            language = arguments.get("language", "sv")
             result = []
             for a in authors:
                 if a.get("deletedAt", 0) != 0:
@@ -245,18 +249,21 @@ async def call_tool(name: str, arguments: dict):
                     continue
                 if not a.get("email", "").endswith("@stratsys.se"):
                     continue
-                entry = {
-                    "id": str(a["id"]),
-                    "name": a.get("fullName") or a.get("name"),
-                    "email": a.get("email", "")
-                }
-                if language and language != "sv":
+                if a.get("translatedFromId"):
+                    continue
+                if language == "sv":
+                    author_id = str(a["id"])
+                else:
                     translations = a.get("translations", {})
                     if language in translations:
-                        entry["language_id"] = str(translations[language]["id"])
+                        author_id = str(translations[language]["id"])
                     else:
-                        entry["language_id"] = str(a["id"])
-                result.append(entry)
+                        author_id = str(a["id"])
+                result.append({
+                    "author_id": author_id,
+                    "name": a.get("fullName") or a.get("name"),
+                    "language": language
+                })
             return [types.TextContent(type="text", text=str(result))]
 
         elif name == "get_landing_pages":
