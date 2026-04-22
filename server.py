@@ -88,14 +88,14 @@ async def list_tools():
         ),
         types.Tool(
             name="get_blog_authors",
-            description="Hämta lista över alla bloggförfattare i HubSpot med namn och ID.",
+            description="Hämta lista över Stratsys bloggförfattare i HubSpot med namn och ID.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
                         "enum": ["sv", "no", "en"],
-                        "description": "Filtrera på språk för att få språkspecifika Author ID:n (valfritt)"
+                        "description": "Filtrera på språk för språkspecifika Author ID:n (valfritt)"
                     }
                 }
             }
@@ -243,8 +243,8 @@ async def call_tool(name: str, arguments: dict):
                     continue
                 if a.get("name") == "Sample HubSpot User":
                     continue
-		if not a.get("email", "").endswith("@stratsys.se"):
-        	    continue
+                if not a.get("email", "").endswith("@stratsys.se"):
+                    continue
                 entry = {
                     "id": str(a["id"]),
                     "name": a.get("fullName") or a.get("name"),
