@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp import types
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.requests import Request
 import uvicorn
 
