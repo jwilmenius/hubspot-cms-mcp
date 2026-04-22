@@ -243,6 +243,8 @@ async def call_tool(name: str, arguments: dict):
                     continue
                 if a.get("name") == "Sample HubSpot User":
                     continue
+		if not a.get("email", "").endswith("@stratsys.se"):
+        	    continue
                 entry = {
                     "id": str(a["id"]),
                     "name": a.get("fullName") or a.get("name"),
