@@ -1,7 +1,12 @@
 import os
 import httpx
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from mcp import types
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.requests import Request
 import uvicorn
 
 load_dotenv()
@@ -20,204 +25,274 @@ BLOG_IDS = {
     "en": "167463790880"
 }
 
-mcp = FastMCP("hubspot-cms")
+app = Server("hubspot-cms")
 
-@mcp.tool()
-async def get_blogs() -> str:
-    """Hämta lista över tillgängliga Stratsys-bloggar med deras ID:n och språk."""
-    result = [
-        {"language": "sv", "id": BLOG_IDS["sv"], "url": "www.stratsys.com/sv/kunskapshub"},
-        {"language": "no", "id": BLOG_IDS["no"], "url": "www.stratsys.com/no/knowledge-hub"},
-        {"language": "en", "id": BLOG_IDS["en"], "url": "www.stratsys.com/knowledge-hub"}
-    ]
-    return str(result)
-
-@mcp.tool()
-async def get_blog_posts(language: str = "", state: str = "", limit: int = 10) -> str:
-    """Hämta blogginlägg från HubSpot sorterade på senaste publish date.
-    
-    Args:
-        language: Språk: sv=Svenska, no=Norska, en=Engelska
-        state: Status: DRAFT eller PUBLISHED
-        limit: Antal inlägg att hämta (max 100)
-    """
-    params = {"limit": limit, "sort": "-publish_date"}
-    if state:
-        params["state"] = state
-    if language and language in BLOG_IDS:
-        params["contentGroupId"] = BLOG_IDS[language]
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, params=params)
-        posts = r.json().get("results", [])
-    result = [{"id": p["id"], "title": p["name"], "state": p["state"], "published": p.get("publishDate", ""), "url": p.get("url", "")} for p in posts]
-    return str(result)
-
-@mcp.tool()
-async def get_blog_post(post_id: str = "", search: str = "", language: str = "") -> str:
-    """Hämta ett specifikt blogginlägg via ID eller sök på titel/nyckelord.
-    
-    Args:
-        post_id: Exakt ID på blogginlägget
-        search: Sökterm för att hitta inlägg på titel
-        language: Filtrera på språk vid sökning: sv, no eller en
-    """
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        if post_id:
-            r = await client.get(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS)
-            p = r.json()
-            result = {
-                "id": p.get("id"),
-                "title": p.get("name"),
-                "state": p.get("currentState"),
-                "publishDate": p.get("publishDate"),
-                "metaDescription": p.get("metaDescription"),
-                "featuredImage": p.get("featuredImage", ""),
-                "featuredImageAltText": p.get("featuredImageAltText", ""),
-                "url": p.get("url"),
-                "postBody": p.get("postBody", "")
+@app.list_tools()
+async def list_tools():
+    return [
+        types.Tool(
+            name="get_blogs",
+            description="Hämta lista över tillgängliga Stratsys-bloggar med deras ID:n och språk.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        types.Tool(
+            name="get_blog_posts",
+            description=(
+                "Hämta blogginlägg från HubSpot, sorterade på senaste publish date. "
+                "Ange language='sv', 'no' eller 'en' för att filtrera per språk. "
+                "Kan även filtrera på status DRAFT eller PUBLISHED."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "description": "Språk: sv=Svenska, no=Norska, en=Engelska"
+                    },
+                    "state": {
+                        "type": "string",
+                        "enum": ["DRAFT", "PUBLISHED"],
+                        "description": "Status på inläggen"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Antal inlägg att hämta (max 100)",
+                        "default": 10
+                    }
+                }
             }
-            return str(result)
-        elif search:
-            params = {"limit": 10, "sort": "-publish_date", "name__icontains": search}
-            if language and language in BLOG_IDS:
-                params["contentGroupId"] = BLOG_IDS[language]
+        ),
+        types.Tool(
+            name="get_blog_post",
+            description="Hämta ett specifikt blogginlägg via ID eller sök på titel/nyckelord.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "post_id": {
+                        "type": "string",
+                        "description": "Exakt ID på blogginlägget"
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Sökterm för att hitta inlägg på titel"
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "description": "Filtrera på språk (valfritt vid sökning)"
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="get_blog_authors",
+            description=(
+                "Hämta lista över Stratsys bloggförfattare i HubSpot. "
+                "Ange language='sv', 'no' eller 'en' för att få rätt author_id per språk."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "description": "Språk att hämta author ID:n för (default: sv)"
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="get_landing_pages",
+            description="Hämta landningssidor från HubSpot.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "enum": ["DRAFT", "PUBLISHED"],
+                        "description": "Status på sidorna"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="create_blog_post",
+            description=(
+                "Skapa ett nytt blogginlägg som utkast i HubSpot. "
+                "Ange language='sv', 'no' eller 'en' — rätt blogg väljs automatiskt."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Titel på blogginlägget"},
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "default": "sv"
+                    },
+                    "blog_author_id": {"type": "string", "description": "ID på bloggförfattaren"},
+                    "post_body": {"type": "string", "description": "HTML-innehåll i inlägget"},
+                    "meta_description": {"type": "string", "description": "SEO-beskrivning"},
+                    "featured_image": {"type": "string", "description": "URL till featured image"},
+                    "featured_image_alt": {"type": "string", "description": "Alt-text för featured image"}
+                },
+                "required": ["name", "language"]
+            }
+        ),
+        types.Tool(
+            name="update_blog_post",
+            description="Uppdatera ett befintligt blogginlägg i HubSpot.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "post_id": {"type": "string", "description": "ID på blogginlägget"},
+                    "name": {"type": "string"},
+                    "post_body": {"type": "string"},
+                    "meta_description": {"type": "string"},
+                    "featured_image": {"type": "string", "description": "URL till featured image"},
+                    "featured_image_alt": {"type": "string", "description": "Alt-text för featured image"}
+                },
+                "required": ["post_id"]
+            }
+        )
+    ]
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict):
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+
+        if name == "get_blogs":
+            result = [
+                {"language": "sv", "id": BLOG_IDS["sv"], "url": "www.stratsys.com/sv/kunskapshub"},
+                {"language": "no", "id": BLOG_IDS["no"], "url": "www.stratsys.com/no/knowledge-hub"},
+                {"language": "en", "id": BLOG_IDS["en"], "url": "www.stratsys.com/knowledge-hub"}
+            ]
+            return [types.TextContent(type="text", text=str(result))]
+
+        elif name == "get_blog_posts":
+            params = {"limit": arguments.get("limit", 10), "sort": "-publish_date"}
+            if "state" in arguments:
+                params["state"] = arguments["state"]
+            if "language" in arguments:
+                params["contentGroupId"] = BLOG_IDS[arguments["language"]]
             r = await client.get(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, params=params)
             posts = r.json().get("results", [])
-            result = [{"id": p["id"], "title": p["name"], "state": p["state"], "publishDate": p.get("publishDate", ""), "url": p.get("url", "")} for p in posts]
-            return str(result)
-    return "Ange antingen post_id eller search."
+            result = [{"id": p["id"], "title": p["name"], "state": p["state"], "published": p.get("publishDate", ""), "url": p.get("url", "")} for p in posts]
+            return [types.TextContent(type="text", text=str(result))]
 
-@mcp.tool()
-async def get_blog_authors(language: str = "sv") -> str:
-    """Hämta lista över Stratsys bloggförfattare med rätt author_id per språk.
-    
-    Args:
-        language: Språk: sv, no eller en (default: sv)
-    """
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/blogs/v3/blog-authors", headers=HEADERS, params={"limit": 100})
-        authors = r.json().get("objects", [])
-    result = []
-    for a in authors:
-        if a.get("deletedAt", 0) != 0:
-            continue
-        if a.get("name") == "Sample HubSpot User":
-            continue
-        if not a.get("email", "").endswith("@stratsys.se"):
-            continue
-        if a.get("translatedFromId"):
-            continue
-        if language == "sv":
-            author_id = str(a["id"])
-        else:
-            translations = a.get("translations", {})
-            if language in translations:
-                author_id = str(translations[language]["id"])
-            else:
-                author_id = str(a["id"])
-        result.append({
-            "author_id": author_id,
-            "name": a.get("fullName") or a.get("name"),
-            "language": language
-        })
-    return str(result)
+        elif name == "get_blog_post":
+            if "post_id" in arguments:
+                r = await client.get(f"{BASE}/cms/v3/blogs/posts/{arguments['post_id']}", headers=HEADERS)
+                p = r.json()
+                result = {
+                    "id": p.get("id"),
+                    "title": p.get("name"),
+                    "state": p.get("currentState"),
+                    "publishDate": p.get("publishDate"),
+                    "metaDescription": p.get("metaDescription"),
+                    "featuredImage": p.get("featuredImage", ""),
+                    "featuredImageAltText": p.get("featuredImageAltText", ""),
+                    "url": p.get("url"),
+                    "postBody": p.get("postBody", "")
+                }
+                return [types.TextContent(type="text", text=str(result))]
+            elif "search" in arguments:
+                params = {"limit": 10, "sort": "-publish_date", "name__icontains": arguments["search"]}
+                if "language" in arguments:
+                    params["contentGroupId"] = BLOG_IDS[arguments["language"]]
+                r = await client.get(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, params=params)
+                posts = r.json().get("results", [])
+                result = [{"id": p["id"], "title": p["name"], "state": p["state"], "publishDate": p.get("publishDate", ""), "url": p.get("url", "")} for p in posts]
+                return [types.TextContent(type="text", text=str(result))]
+            return [types.TextContent(type="text", text="Ange antingen post_id eller search.")]
 
-@mcp.tool()
-async def get_landing_pages(state: str = "", limit: int = 10) -> str:
-    """Hämta landningssidor från HubSpot.
-    
-    Args:
-        state: Status: DRAFT eller PUBLISHED
-        limit: Antal sidor att hämta
-    """
-    params = {"limit": limit}
-    if state:
-        params["state"] = state
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/cms/v3/pages/landing-pages", headers=HEADERS, params=params)
-        pages = r.json().get("results", [])
-    result = [{"id": p["id"], "title": p["name"], "state": p["state"]} for p in pages]
-    return str(result)
+        elif name == "get_blog_authors":
+            r = await client.get(f"{BASE}/blogs/v3/blog-authors", headers=HEADERS, params={"limit": 100})
+            authors = r.json().get("objects", [])
+            language = arguments.get("language", "sv")
+            result = []
+            for a in authors:
+                if a.get("deletedAt", 0) != 0:
+                    continue
+                if a.get("name") == "Sample HubSpot User":
+                    continue
+                if not a.get("email", "").endswith("@stratsys.se"):
+                    continue
+                if a.get("translatedFromId"):
+                    continue
+                author_id = str(a["id"]) if language == "sv" else str(a.get("translations", {}).get(language, {}).get("id", a["id"]))
+                result.append({"author_id": author_id, "name": a.get("fullName") or a.get("name"), "language": language})
+            return [types.TextContent(type="text", text=str(result))]
 
-@mcp.tool()
-async def create_blog_post(
-    name: str,
-    language: str = "sv",
-    post_body: str = "",
-    meta_description: str = "",
-    blog_author_id: str = "",
-    featured_image: str = "",
-    featured_image_alt: str = ""
-) -> str:
-    """Skapa ett nytt blogginlägg som utkast i HubSpot.
-    
-    Args:
-        name: Titel på blogginlägget
-        language: Språk: sv, no eller en
-        post_body: HTML-innehåll i inlägget
-        meta_description: SEO-beskrivning max 155 tecken
-        blog_author_id: ID på bloggförfattaren
-        featured_image: URL till featured image
-        featured_image_alt: Alt-text för featured image
-    """
-    content_group_id = BLOG_IDS.get(language, BLOG_IDS["sv"])
-    payload = {
-        "name": name,
-        "contentGroupId": content_group_id,
-        "state": "DRAFT"
-    }
-    if post_body:
-        payload["postBody"] = post_body
-    if meta_description:
-        payload["metaDescription"] = meta_description
-    if blog_author_id:
-        payload["blogAuthorId"] = blog_author_id
-    if featured_image:
-        payload["featuredImage"] = featured_image
-        payload["useFeaturedImage"] = True
-    if featured_image_alt:
-        payload["featuredImageAltText"] = featured_image_alt
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
-        post = r.json()
-    return f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}"
+        elif name == "get_landing_pages":
+            params = {"limit": arguments.get("limit", 10)}
+            if "state" in arguments:
+                params["state"] = arguments["state"]
+            r = await client.get(f"{BASE}/cms/v3/pages/landing-pages", headers=HEADERS, params=params)
+            pages = r.json().get("results", [])
+            result = [{"id": p["id"], "title": p["name"], "state": p["state"]} for p in pages]
+            return [types.TextContent(type="text", text=str(result))]
 
-@mcp.tool()
-async def update_blog_post(
-    post_id: str,
-    name: str = "",
-    post_body: str = "",
-    meta_description: str = "",
-    featured_image: str = "",
-    featured_image_alt: str = ""
-) -> str:
-    """Uppdatera ett befintligt blogginlägg i HubSpot.
-    
-    Args:
-        post_id: ID på blogginlägget
-        name: Ny titel
-        post_body: Nytt HTML-innehåll
-        meta_description: Ny SEO-beskrivning
-        featured_image: URL till featured image
-        featured_image_alt: Alt-text för featured image
-    """
-    payload = {}
-    if name:
-        payload["name"] = name
-    if post_body:
-        payload["postBody"] = post_body
-    if meta_description:
-        payload["metaDescription"] = meta_description
-    if featured_image:
-        payload["featuredImage"] = featured_image
-        payload["useFeaturedImage"] = True
-    if featured_image_alt:
-        payload["featuredImageAltText"] = featured_image_alt
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.patch(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS, json=payload)
-    return f"Uppdaterat inlägg {post_id}"
+        elif name == "create_blog_post":
+            language = arguments.get("language", "sv")
+            payload = {
+                "name": arguments["name"],
+                "contentGroupId": BLOG_IDS.get(language, BLOG_IDS["sv"]),
+                "state": "DRAFT"
+            }
+            if arguments.get("post_body"):
+                payload["postBody"] = arguments["post_body"]
+            if arguments.get("meta_description"):
+                payload["metaDescription"] = arguments["meta_description"]
+            if arguments.get("blog_author_id"):
+                payload["blogAuthorId"] = arguments["blog_author_id"]
+            if arguments.get("featured_image"):
+                payload["featuredImage"] = arguments["featured_image"]
+                payload["useFeaturedImage"] = True
+            if arguments.get("featured_image_alt"):
+                payload["featuredImageAltText"] = arguments["featured_image_alt"]
+            r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
+            post = r.json()
+            return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}")]
 
+        elif name == "update_blog_post":
+            post_id = arguments.pop("post_id")
+            payload = {}
+            if arguments.get("name"):
+                payload["name"] = arguments["name"]
+            if arguments.get("post_body"):
+                payload["postBody"] = arguments["post_body"]
+            if arguments.get("meta_description"):
+                payload["metaDescription"] = arguments["meta_description"]
+            if arguments.get("featured_image"):
+                payload["featuredImage"] = arguments["featured_image"]
+                payload["useFeaturedImage"] = True
+            if arguments.get("featured_image_alt"):
+                payload["featuredImageAltText"] = arguments["featured_image_alt"]
+            r = await client.patch(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS, json=payload)
+            return [types.TextContent(type="text", text=f"Uppdaterat inlägg {post_id}")]
+
+
+sse = SseServerTransport("/messages/")
+
+async def handle_sse(request: Request):
+    async with sse.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await app.run(streams[0], streams[1], app.create_initialization_options())
+
+starlette_app = Starlette(
+    routes=[
+        Route("/sse", endpoint=handle_sse),
+        Mount("/messages/", app=sse.handle_post_message),
+    ]
+)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=port, path="/mcp")
+    uvicorn.run(starlette_app, host="0.0.0.0", port=port)
