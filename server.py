@@ -19,6 +19,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 BASE = "https://api.hubapi.com"
+TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 BLOG_IDS = {
     "sv": "5423796480",
@@ -194,7 +195,7 @@ async def list_tools():
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
 
         if name == "get_blogs":
             result = [
