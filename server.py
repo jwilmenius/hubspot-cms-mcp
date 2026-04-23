@@ -152,6 +152,14 @@ async def list_tools():
                     "meta_description": {
                         "type": "string",
                         "description": "SEO-beskrivning"
+                    },
+                    "featured_image": {
+                        "type": "string",
+                        "description": "URL till featured image som visas i bloggmallens header"
+                    },
+                    "featured_image_alt": {
+                        "type": "string",
+                        "description": "Alt-text för featured image (viktigt för SEO och tillgänglighet)"
                     }
                 },
                 "required": ["name", "language"]
@@ -169,7 +177,15 @@ async def list_tools():
                     },
                     "name": {"type": "string"},
                     "post_body": {"type": "string"},
-                    "meta_description": {"type": "string"}
+                    "meta_description": {"type": "string"},
+                    "featured_image": {
+                        "type": "string",
+                        "description": "URL till featured image"
+                    },
+                    "featured_image_alt": {
+                        "type": "string",
+                        "description": "Alt-text för featured image"
+                    }
                 },
                 "required": ["post_id"]
             }
@@ -215,6 +231,8 @@ async def call_tool(name: str, arguments: dict):
                     "state": p.get("currentState"),
                     "publishDate": p.get("publishDate"),
                     "metaDescription": p.get("metaDescription"),
+                    "featuredImage": p.get("featuredImage", ""),
+                    "featuredImageAltText": p.get("featuredImageAltText", ""),
                     "url": p.get("url"),
                     "postBody": p.get("postBody", "")
                 }
@@ -289,6 +307,11 @@ async def call_tool(name: str, arguments: dict):
                 payload["metaDescription"] = arguments["meta_description"]
             if "blog_author_id" in arguments:
                 payload["blogAuthorId"] = arguments["blog_author_id"]
+            if "featured_image" in arguments:
+                payload["featuredImage"] = arguments["featured_image"]
+                payload["useFeaturedImage"] = True
+            if "featured_image_alt" in arguments:
+                payload["featuredImageAltText"] = arguments["featured_image_alt"]
             r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
             post = r.json()
             return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}")]
@@ -300,6 +323,11 @@ async def call_tool(name: str, arguments: dict):
                 payload["postBody"] = payload.pop("post_body")
             if "meta_description" in payload:
                 payload["metaDescription"] = payload.pop("meta_description")
+            if "featured_image" in payload:
+                payload["featuredImage"] = payload.pop("featured_image")
+                payload["useFeaturedImage"] = True
+            if "featured_image_alt" in payload:
+                payload["featuredImageAltText"] = payload.pop("featured_image_alt")
             r = await client.patch(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS, json=payload)
             return [types.TextContent(type="text", text=f"Uppdaterat inlägg {post_id}")]
 
