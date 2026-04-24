@@ -146,7 +146,12 @@ async def list_tools():
         ),
         types.Tool(
             name="update_blog_post",
-            description="Uppdatera ett befintligt blogginlägg i HubSpot.",
+            description=(
+                "Uppdatera ett befintligt publicerat blogginlägg i HubSpot genom att skriva till "
+                "draft-bufferten. Ändringen publiceras INTE direkt — inlägget får en pending draft "
+                "som redaktören granskar och publicerar manuellt via 'Update'-knappen i HubSpot. "
+                "Använd push_blog_post_draft för att publicera via API om redaktören godkänt i chatten."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -156,6 +161,21 @@ async def list_tools():
                     "meta_description": {"type": "string"},
                     "featured_image": {"type": "string", "description": "URL till featured image"},
                     "featured_image_alt": {"type": "string", "description": "Alt-text för featured image"}
+                },
+                "required": ["post_id"]
+            }
+        ),
+        types.Tool(
+            name="push_blog_post_draft",
+            description=(
+                "Publicerar den väntande draft-bufferten på ett befintligt publicerat blogginlägg. "
+                "Använd detta ENDAST när användaren explicit godkänt ändringen i chatten. "
+                "Motsvarar att klicka 'Update' i HubSpot-editorn."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "post_id": {"type": "string", "description": "ID på blogginlägget vars draft ska publiceras"}
                 },
                 "required": ["post_id"]
             }
@@ -274,8 +294,17 @@ async def call_tool(name: str, arguments: dict):
                 payload["useFeaturedImage"] = True
             if arguments.get("featured_image_alt"):
                 payload["featuredImageAltText"] = arguments["featured_image_alt"]
-            r = await client.patch(f"{BASE}/cms/v3/blogs/posts/{post_id}", headers=HEADERS, json=payload)
-            return [types.TextContent(type="text", text=f"Uppdaterat inlägg {post_id}")]
+            r = await client.patch(f"{BASE}/cms/blogs/2026-03/posts/{post_id}/draft", headers=HEADERS, json=payload)
+            result = r.json()
+            return [types.TextContent(type="text", text=f"Draft sparad för inlägg {post_id} — titel: {result.get('name')} — ändringen är INTE publicerad. Redaktören behöver öppna inlägget i HubSpot och klicka 'Update' för att publicera.")]
+
+        elif name == "push_blog_post_draft":
+            post_id = arguments["post_id"]
+            r = await client.post(f"{BASE}/cms/blogs/2026-03/posts/{post_id}/draft/push-live", headers=HEADERS)
+            if r.status_code in (200, 204):
+                return [types.TextContent(type="text", text=f"Draft för inlägg {post_id} är nu publicerad live.")]
+            else:
+                return [types.TextContent(type="text", text=f"Fel vid publicering: {r.status_code} — {r.text}")]
 
 
 sse = SseServerTransport("/messages/")
