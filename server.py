@@ -25,6 +25,12 @@ BLOG_IDS = {
     "en": "167463790880"
 }
 
+CASE_IDS = {
+    "sv": "6082252317",
+    "no": "",   # fyll i när NO-blogg finns
+    "en": ""    # fyll i när EN-blogg finns
+}
+
 app = Server("hubspot-cms")
 
 @app.list_tools()
@@ -123,8 +129,10 @@ async def list_tools():
         types.Tool(
             name="create_blog_post",
             description=(
-                "Skapa ett nytt blogginlägg som utkast i HubSpot. "
-                "Ange language='sv', 'no' eller 'en' — rätt blogg väljs automatiskt."
+                "Skapa ett nytt blogginlägg eller kundcase som utkast i HubSpot. "
+                "Ange language='sv', 'no' eller 'en'. "
+                "Ange content_type='case' för att spara i Customer Cases-bloggen, "
+                "annars sparas det i kunskapshubben (default)."
             ),
             inputSchema={
                 "type": "object",
@@ -134,6 +142,12 @@ async def list_tools():
                         "type": "string",
                         "enum": ["sv", "no", "en"],
                         "default": "sv"
+                    },
+                    "content_type": {
+                        "type": "string",
+                        "enum": ["blog", "case"],
+                        "default": "blog",
+                        "description": "blog = kunskapshub, case = customer cases"
                     },
                     "blog_author_id": {"type": "string", "description": "ID på bloggförfattaren"},
                     "post_body": {"type": "string", "description": "HTML-innehåll i inlägget"},
@@ -190,7 +204,8 @@ async def call_tool(name: str, arguments: dict):
             result = [
                 {"language": "sv", "id": BLOG_IDS["sv"], "url": "www.stratsys.com/sv/kunskapshub"},
                 {"language": "no", "id": BLOG_IDS["no"], "url": "www.stratsys.com/no/knowledge-hub"},
-                {"language": "en", "id": BLOG_IDS["en"], "url": "www.stratsys.com/knowledge-hub"}
+                {"language": "en", "id": BLOG_IDS["en"], "url": "www.stratsys.com/knowledge-hub"},
+                {"language": "sv (cases)", "id": CASE_IDS["sv"], "url": "www.stratsys.com/sv/kundcase"}
             ]
             return [types.TextContent(type="text", text=str(result))]
 
@@ -260,9 +275,14 @@ async def call_tool(name: str, arguments: dict):
 
         elif name == "create_blog_post":
             language = arguments.get("language", "sv")
+            content_type = arguments.get("content_type", "blog")
+            if content_type == "case":
+                group_id = CASE_IDS.get(language, CASE_IDS["sv"])
+            else:
+                group_id = BLOG_IDS.get(language, BLOG_IDS["sv"])
             payload = {
                 "name": arguments["name"],
-                "contentGroupId": BLOG_IDS.get(language, BLOG_IDS["sv"]),
+                "contentGroupId": group_id,
                 "state": "DRAFT"
             }
             if arguments.get("post_body"):
@@ -278,7 +298,7 @@ async def call_tool(name: str, arguments: dict):
                 payload["featuredImageAltText"] = arguments["featured_image_alt"]
             r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
             post = r.json()
-            return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}")]
+            return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language} — Typ: {content_type}")]
 
         elif name == "update_blog_post":
             post_id = arguments.pop("post_id")
