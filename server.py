@@ -129,10 +129,8 @@ async def list_tools():
         types.Tool(
             name="create_blog_post",
             description=(
-                "Skapa ett nytt blogginlägg eller kundcase som utkast i HubSpot. "
-                "Ange language='sv', 'no' eller 'en'. "
-                "Ange content_type='case' för att spara i Customer Cases-bloggen, "
-                "annars sparas det i kunskapshubben (default)."
+                "Skapa ett nytt blogginlägg som utkast i HubSpot (kunskapshubben). "
+                "Ange language='sv', 'no' eller 'en' — rätt blogg väljs automatiskt."
             ),
             inputSchema={
                 "type": "object",
@@ -143,14 +141,33 @@ async def list_tools():
                         "enum": ["sv", "no", "en"],
                         "default": "sv"
                     },
-                    "content_type": {
-                        "type": "string",
-                        "enum": ["blog", "case"],
-                        "default": "blog",
-                        "description": "blog = kunskapshub, case = customer cases"
-                    },
                     "blog_author_id": {"type": "string", "description": "ID på bloggförfattaren"},
                     "post_body": {"type": "string", "description": "HTML-innehåll i inlägget"},
+                    "meta_description": {"type": "string", "description": "SEO-beskrivning"},
+                    "featured_image": {"type": "string", "description": "URL till featured image"},
+                    "featured_image_alt": {"type": "string", "description": "Alt-text för featured image"}
+                },
+                "required": ["name", "language"]
+            }
+        ),
+        types.Tool(
+            name="create_case",
+            description=(
+                "Skapa ett nytt kundcase som utkast i HubSpot (Customer Cases-bloggen). "
+                "Använd detta verktyg — INTE create_blog_post — för alla kundcase. "
+                "Ange language='sv', 'no' eller 'en'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Titel på kundcaset"},
+                    "language": {
+                        "type": "string",
+                        "enum": ["sv", "no", "en"],
+                        "default": "sv"
+                    },
+                    "blog_author_id": {"type": "string", "description": "ID på bloggförfattaren"},
+                    "post_body": {"type": "string", "description": "HTML-innehåll i caset"},
                     "meta_description": {"type": "string", "description": "SEO-beskrivning"},
                     "featured_image": {"type": "string", "description": "URL till featured image"},
                     "featured_image_alt": {"type": "string", "description": "Alt-text för featured image"}
@@ -275,14 +292,9 @@ async def call_tool(name: str, arguments: dict):
 
         elif name == "create_blog_post":
             language = arguments.get("language", "sv")
-            content_type = arguments.get("content_type", "blog")
-            if content_type == "case":
-                group_id = CASE_IDS.get(language, CASE_IDS["sv"])
-            else:
-                group_id = BLOG_IDS.get(language, BLOG_IDS["sv"])
             payload = {
                 "name": arguments["name"],
-                "contentGroupId": group_id,
+                "contentGroupId": BLOG_IDS.get(language, BLOG_IDS["sv"]),
                 "state": "DRAFT"
             }
             if arguments.get("post_body"):
@@ -298,7 +310,29 @@ async def call_tool(name: str, arguments: dict):
                 payload["featuredImageAltText"] = arguments["featured_image_alt"]
             r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
             post = r.json()
-            return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language} — Typ: {content_type}")]
+            return [types.TextContent(type="text", text=f"Skapat inlägg med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}")]
+
+        elif name == "create_case":
+            language = arguments.get("language", "sv")
+            payload = {
+                "name": arguments["name"],
+                "contentGroupId": CASE_IDS.get(language, CASE_IDS["sv"]),
+                "state": "DRAFT"
+            }
+            if arguments.get("post_body"):
+                payload["postBody"] = arguments["post_body"]
+            if arguments.get("meta_description"):
+                payload["metaDescription"] = arguments["meta_description"]
+            if arguments.get("blog_author_id"):
+                payload["blogAuthorId"] = arguments["blog_author_id"]
+            if arguments.get("featured_image"):
+                payload["featuredImage"] = arguments["featured_image"]
+                payload["useFeaturedImage"] = True
+            if arguments.get("featured_image_alt"):
+                payload["featuredImageAltText"] = arguments["featured_image_alt"]
+            r = await client.post(f"{BASE}/cms/v3/blogs/posts", headers=HEADERS, json=payload)
+            post = r.json()
+            return [types.TextContent(type="text", text=f"Skapat kundcase med ID: {post.get('id')} — Titel: {post.get('name')} — Språk: {language}")]
 
         elif name == "update_blog_post":
             post_id = arguments.pop("post_id")
@@ -345,3 +379,4 @@ starlette_app = Starlette(
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(starlette_app, host="0.0.0.0", port=port)
+EOF
